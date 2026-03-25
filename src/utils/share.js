@@ -1,6 +1,7 @@
 const KAKAO_SDK_URL = 'https://t1.kakaocdn.net/kakao_js_sdk/2.8.0/kakao.min.js';
 const SHARE_PARAM = 'shared';
 const SHARE_IMAGE_PATH = '/kakao-share-card.svg';
+const RESULT_HASH_ROUTE = '#/result';
 
 let kakaoSdkPromise = null;
 
@@ -39,6 +40,27 @@ function buildSharePayload(mazeData) {
   };
 }
 
+function buildResultHash(encodedPayload) {
+  const hashParams = new URLSearchParams();
+  hashParams.set(SHARE_PARAM, encodedPayload);
+  return `${RESULT_HASH_ROUTE}?${hashParams.toString()}`;
+}
+
+function getSharedPayloadFromHash(hash) {
+  if (!hash?.startsWith(RESULT_HASH_ROUTE)) {
+    return '';
+  }
+
+  const queryIndex = hash.indexOf('?');
+
+  if (queryIndex === -1) {
+    return '';
+  }
+
+  const hashParams = new URLSearchParams(hash.slice(queryIndex + 1));
+  return hashParams.get(SHARE_PARAM) || '';
+}
+
 export function buildShareUrl(mazeData) {
   const currentUrl = getCurrentUrl();
 
@@ -51,7 +73,7 @@ export function buildShareUrl(mazeData) {
   }
 
   const shareUrl = new URL(`${currentUrl.origin}${currentUrl.pathname}`);
-  shareUrl.searchParams.set(SHARE_PARAM, encodePayload(buildSharePayload(mazeData)));
+  shareUrl.hash = buildResultHash(encodePayload(buildSharePayload(mazeData)));
   return shareUrl.toString();
 }
 
@@ -62,7 +84,7 @@ export function parseSharedMazeData() {
     return null;
   }
 
-  const encoded = currentUrl.searchParams.get(SHARE_PARAM);
+  const encoded = getSharedPayloadFromHash(currentUrl.hash);
 
   if (!encoded) {
     return null;
@@ -100,7 +122,7 @@ export function parseSharedMazeData() {
 export function clearSharedUrl() {
   const currentUrl = getCurrentUrl();
 
-  if (!currentUrl || !currentUrl.searchParams.has(SHARE_PARAM)) {
+  if (!currentUrl || !getSharedPayloadFromHash(currentUrl.hash)) {
     return;
   }
 
