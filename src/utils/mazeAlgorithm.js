@@ -1,363 +1,439 @@
 /**
- * 미로 사다리 알고리즘 v6 — 하이브리드 (사다리 로직 + 미로 시각)
+ * Real maze generator
  *
- * 1. generateLadder(): 아미다쿠지(사다리) 구조 생성
- *    → 수직 레인 + 수평 가로대(rung)로 경로 결정
- * 2. simulatePaths(): 각 참가자의 사다리 하강 시뮬레이션
- *    → 레인 전환 추적, 최종 출구 결정
- * 3. buildMazeGrid(): 재귀 백트래킹 미로 배경 + 사다리 통로 강제 개방
- *    → 시각적으로 복잡한 미로, 실제 경로는 사다리 로직
+ * 1. 참가자와 결과 매핑을 먼저 랜덤으로 정한다.
+ * 2. 별도의 실제 미로를 생성한다.
+ * 3. 생성된 미로 안에서 entry -> assigned exit 경로를 추출한다.
  */
 
-// ── 설정 ──
-
-// 참가자 수별 격자 크기 (셀 단위)
-const CELL_COUNTS = {
-  2: { cx: 8,  cy: 10 },
-  3: { cx: 10, cy: 11 },
-  4: { cx: 12, cy: 12 },
-  5: { cx: 14, cy: 13 },
-  6: { cx: 15, cy: 13 },
-};
-
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+const LAYOUTS = {
+  2: { cellCols: 13, cellRows: 17 },
+  3: { cellCols: 15, cellRows: 18 },
+  4: { cellCols: 17, cellRows: 19 },
+  5: { cellCols: 19, cellRows: 20 },
+  6: { cellCols: 21, cellRows: 21 },
 }
 
-const key = (x, y) => `${x},${y}`;
+const DIRECTIONS = [
+  { dx: 0, dy: 1, name: 'down' },
+  { dx: 1, dy: 0, name: 'right' },
+  { dx: -1, dy: 0, name: 'left' },
+  { dx: 0, dy: -1, name: 'up' },
+]
 
-// ── 메인 export ──
-
-export function generateMaze(participantCount) {
-  const { cx: cellsX, cy: cellsY } = CELL_COUNTS[participantCount] || CELL_COUNTS[4];
-  const cols = cellsX * 2 + 1;
-  const rows = cellsY * 2 + 1;
-
-  // 1단계: 사다리 구조 생성
-  const ladder = generateLadder(participantCount, cellsX, cellsY);
-
-  // 2단계: 경로 시뮬레이션
-  const { pathLanes, exitOrder } = simulatePaths(ladder, participantCount);
-
-  // 3단계: 미로 격자 생성 (배경 미로 + 사다리 통로 강제 개방)
-  const grid = buildMazeGrid(cellsX, cellsY, ladder);
-
-  // 4단계: 입구/출구 배치
-  const entries = [];
-  const exits = [];
-  for (let i = 0; i < participantCount; i++) {
-    const gx = ladder.laneX[i];
-    // 입구: 최상단 벽 개방
-    grid[0][gx] = 1;
-    entries.push({ x: gx, y: 0 });
-    // 출구: 최하단 벽 개방
-    grid[rows - 1][gx] = 1;
-    exits.push({ x: gx, y: rows - 1 });
+function resolveLayout(participantCount) {
+  const base = LAYOUTS[participantCount] || LAYOUTS[4]
+  return {
+    ...base,
+    cols: base.cellCols * 2 + 1,
+    rows: base.cellRows * 2 + 1,
   }
-
-  // 5단계: 격자 좌표 기반 경로 생성
-  const paths = [];
-  for (let i = 0; i < participantCount; i++) {
-    const route = buildRoute(pathLanes[i], ladder, rows);
-    paths.push({ from: i, to: exitOrder[i], route });
-  }
-
-  return { grid, paths, entries, exits, cols, rows, exitOrder };
 }
 
-// ── 1. 사다리 구조 생성 ──
-
-function generateLadder(participantCount, cellsX, cellsY) {
-  // 레인 X 좌표 계산 (격자 좌표, 홀수값)
-  const laneX = computeLanePositions(participantCount, cellsX);
-  const laneCount = participantCount;
-
-  // 가로대(rung) 가능 Y 범위: 격자 좌표 기준 y=3 ~ y=rows-4 (상하 여유)
-  const rows = cellsY * 2 + 1;
-  const rungGap = 2; // 가로대 간 최소 Y 간격 (격자 좌표 기준)
-  const minY = 3;
-  const maxY = rows - 4;
-
-  // 가로대 후보 Y 위치들 (홀수 좌표)
-  const rungYCandidates = [];
-  for (let y = minY; y <= maxY; y += rungGap) {
-    if (y % 2 === 1) rungYCandidates.push(y);
+function createRandom(seed) {
+  if (seed === undefined || seed === null) {
+    return Math.random
   }
 
-  // 각 Y행에서 가로대 배치 (인접 레인 연결)
-  // 제약: 같은 행에 겹치는 가로대 없음, 연속 같은 연결 제한
-  const rungs = []; // { laneIdx, y } — laneIdx와 laneIdx+1을 y에서 연결
-  let lastRungLane = -1;
-  let consecutiveCount = 0;
+  let state = Math.abs(Number(seed)) || 1
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
 
-  for (const y of rungYCandidates) {
-    // 이 행에서 배치 가능한 가로대 후보
-    const candidates = [];
-    for (let l = 0; l < laneCount - 1; l++) {
-      candidates.push(l);
+function shuffle(arr, rng) {
+  const next = [...arr]
+  for (let i = next.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1))
+    ;[next[i], next[j]] = [next[j], next[i]]
+  }
+  return next
+}
+
+function pointKey(x, y) {
+  return `${x},${y}`
+}
+
+function cellKey(cell) {
+  return pointKey(cell.x, cell.y)
+}
+
+function edgeKey(a, b) {
+  const first = cellKey(a)
+  const second = cellKey(b)
+  return first < second ? `${first}|${second}` : `${second}|${first}`
+}
+
+function cellToGrid(cell) {
+  return {
+    x: cell.x * 2 + 1,
+    y: cell.y * 2 + 1,
+  }
+}
+
+function computeBoundaryCells(participantCount, cellCols) {
+  const start = 2
+  const end = cellCols - 3
+  const span = end - start
+
+  return Array.from({ length: participantCount }, (_, idx) => {
+    if (participantCount === 1) {
+      return Math.floor(cellCols / 2)
     }
+    return Math.round(start + (span * idx) / (participantCount - 1))
+  })
+}
 
-    // 랜덤하게 0~1개 가로대 배치 (가끔 2개도 허용, 겹치지 않게)
-    const shuffled = shuffle(candidates);
-    const placed = [];
+function createResultOrder(participantCount, rng) {
+  const identity = Array.from({ length: participantCount }, (_, idx) => idx)
 
-    for (const lane of shuffled) {
-      if (placed.length >= 2) break;
-      // 이미 배치된 가로대와 인접하면 안 됨
-      if (placed.some(p => Math.abs(p - lane) <= 1)) continue;
-      // 연속 같은 레인 제한 (최대 2회)
-      if (lane === lastRungLane && consecutiveCount >= 2) continue;
-
-      placed.push(lane);
-    }
-
-    // 확률적으로 가로대 수 결정 (빈 행도 허용)
-    const rungCount = Math.random() < 0.15 ? 0 : Math.random() < 0.7 ? 1 : placed.length;
-    const selected = placed.slice(0, rungCount);
-
-    for (const lane of selected) {
-      rungs.push({ laneIdx: lane, y });
-      if (lane === lastRungLane) {
-        consecutiveCount++;
-      } else {
-        lastRungLane = lane;
-        consecutiveCount = 1;
-      }
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const shuffled = shuffle(identity, rng)
+    if (participantCount <= 1) return shuffled
+    if (shuffled.some((value, idx) => value !== idx)) {
+      return shuffled
     }
   }
 
-  // 가로대가 너무 적으면 추가 (최소 참가자 수 * 2개)
-  const minRungs = participantCount * 2;
-  if (rungs.length < minRungs) {
-    const extraCandidates = shuffle(rungYCandidates.filter(
-      y => !rungs.some(r => r.y === y)
-    ));
-    for (const y of extraCandidates) {
-      if (rungs.length >= minRungs) break;
-      const lane = Math.floor(Math.random() * (laneCount - 1));
-      rungs.push({ laneIdx: lane, y });
+  return identity.map((_, idx) => (idx + 1) % participantCount)
+}
+
+function createMazeState(layout) {
+  return {
+    openEdges: new Map(),
+    layout,
+  }
+}
+
+function carveLogicalEdge(state, from, to) {
+  state.openEdges.set(edgeKey(from, to), [from, to])
+}
+
+function getNeighborCells(cell, layout) {
+  return DIRECTIONS
+    .map(({ dx, dy, name }) => ({
+      x: cell.x + dx,
+      y: cell.y + dy,
+      direction: name,
+    }))
+    .filter((candidate) => (
+      candidate.x >= 0 &&
+      candidate.x < layout.cellCols &&
+      candidate.y >= 0 &&
+      candidate.y < layout.cellRows
+    ))
+}
+
+function directionWeight(from, candidate, layout) {
+  const verticalCenter = (layout.cellCols - 1) / 2
+  let weight = 1
+
+  if (candidate.y > from.y) weight += 2.4
+  if (candidate.y === from.y) weight += 1.2
+  if (candidate.y < from.y) weight += 0.4
+  weight += Math.max(0, 4 - Math.abs(candidate.x - verticalCenter)) * 0.08
+
+  return weight
+}
+
+function chooseWeightedNeighbor(from, neighbors, layout, rng) {
+  const options = neighbors.map((candidate) => ({
+    value: candidate,
+    weight: directionWeight(from, candidate, layout),
+  }))
+
+  const total = options.reduce((sum, option) => sum + option.weight, 0)
+  let roll = rng() * total
+
+  for (const option of options) {
+    roll -= option.weight
+    if (roll <= 0) {
+      return option.value
     }
   }
 
-  // Y 기준 정렬
-  rungs.sort((a, b) => a.y - b.y);
-
-  return { laneX, laneCount, rungs, cellsX, cellsY };
+  return options[options.length - 1]?.value ?? null
 }
 
-function computeLanePositions(participantCount, cellsX) {
-  const gridCols = cellsX * 2 + 1;
-  // 레인을 균등 분배 (홀수 좌표)
-  const positions = [];
-  const totalWidth = gridCols - 2; // 양쪽 벽 제외
-  const spacing = totalWidth / (participantCount + 1);
-
-  for (let i = 0; i < participantCount; i++) {
-    let x = Math.round(spacing * (i + 1));
-    // 홀수로 맞추기
-    if (x % 2 === 0) x = x + 1 < gridCols ? x + 1 : x - 1;
-    // 범위 보정
-    x = Math.max(1, Math.min(gridCols - 2, x));
-    positions.push(x);
-  }
-
-  return positions;
-}
-
-// ── 2. 경로 시뮬레이션 ──
-
-function simulatePaths(ladder, participantCount) {
-  const { rungs } = ladder;
-  const pathLanes = []; // 각 참가자의 레인 전환 기록
-  const exitOrder = [];
-
-  for (let i = 0; i < participantCount; i++) {
-    let currentLane = i;
-    const transitions = [{ lane: currentLane, y: 0 }]; // 시작
-
-    // 가로대를 Y 순서대로 확인
-    for (const rung of rungs) {
-      if (rung.laneIdx === currentLane) {
-        // 현재 레인에서 오른쪽으로 이동
-        transitions.push({ lane: currentLane, y: rung.y, action: 'moveRight' });
-        currentLane = currentLane + 1;
-        transitions.push({ lane: currentLane, y: rung.y });
-      } else if (rung.laneIdx === currentLane - 1) {
-        // 현재 레인에서 왼쪽으로 이동
-        transitions.push({ lane: currentLane, y: rung.y, action: 'moveLeft' });
-        currentLane = currentLane - 1;
-        transitions.push({ lane: currentLane, y: rung.y });
-      }
-    }
-
-    transitions.push({ lane: currentLane, y: -1 }); // 끝 마커
-    pathLanes.push(transitions);
-    exitOrder.push(currentLane);
-  }
-
-  return { pathLanes, exitOrder };
-}
-
-// ── 3. 미로 격자 생성 ──
-
-function buildMazeGrid(cellsX, cellsY, ladder) {
-  const cols = cellsX * 2 + 1;
-  const rows = cellsY * 2 + 1;
-
-  // 격자 초기화 (모두 벽)
-  const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
-
-  // 3-1: 재귀 백트래킹으로 배경 미로 생성
-  carveBackgroundMaze(grid, cellsX, cellsY);
-
-  // 3-2: 사다리 통로 강제 개방
-  carveLadderCorridors(grid, ladder, rows);
-
-  return grid;
-}
-
-function carveBackgroundMaze(grid, cellsX, cellsY) {
-  const visited = Array.from({ length: cellsY }, () => Array(cellsX).fill(false));
-
-  // 모든 셀을 통로로
-  for (let cy = 0; cy < cellsY; cy++) {
-    for (let cx = 0; cx < cellsX; cx++) {
-      grid[cy * 2 + 1][cx * 2 + 1] = 1;
-    }
-  }
-
-  const dirs = [
-    { dcx: 0, dcy: -1 },
-    { dcx: 0, dcy: 1 },
-    { dcx: -1, dcy: 0 },
-    { dcx: 1, dcy: 0 },
-  ];
-
-  // 스택 기반 DFS
-  const stack = [{ cx: 0, cy: 0 }];
-  visited[0][0] = true;
+function createPerfectMaze(layout, rng) {
+  const state = createMazeState(layout)
+  const visited = new Set()
+  const stack = [{ x: Math.floor(layout.cellCols / 2), y: 0 }]
+  visited.add(cellKey(stack[0]))
 
   while (stack.length > 0) {
-    const cur = stack[stack.length - 1];
-    const neighbors = [];
+    const current = stack[stack.length - 1]
+    const unvisitedNeighbors = getNeighborCells(current, layout)
+      .filter((candidate) => !visited.has(cellKey(candidate)))
 
-    for (const { dcx, dcy } of dirs) {
-      const nx = cur.cx + dcx;
-      const ny = cur.cy + dcy;
-      if (nx >= 0 && nx < cellsX && ny >= 0 && ny < cellsY && !visited[ny][nx]) {
-        neighbors.push({ cx: nx, cy: ny, dcx, dcy });
-      }
+    if (unvisitedNeighbors.length === 0) {
+      stack.pop()
+      continue
     }
 
-    if (neighbors.length === 0) {
-      stack.pop();
-      continue;
-    }
+    const next = chooseWeightedNeighbor(current, unvisitedNeighbors, layout, rng)
+    carveLogicalEdge(state, current, next)
+    visited.add(cellKey(next))
+    stack.push({ x: next.x, y: next.y })
+  }
 
-    const next = neighbors[Math.floor(Math.random() * neighbors.length)];
-    visited[next.cy][next.cx] = true;
+  return state
+}
 
-    // 벽 제거
-    const wallX = cur.cx * 2 + 1 + next.dcx;
-    const wallY = cur.cy * 2 + 1 + next.dcy;
-    grid[wallY][wallX] = 1;
+function carveCorridor(grid, start, end) {
+  const dx = Math.sign(end.x - start.x)
+  const dy = Math.sign(end.y - start.y)
 
-    stack.push({ cx: next.cx, cy: next.cy });
+  let x = start.x
+  let y = start.y
+  grid[y][x] = 1
+
+  while (x !== end.x || y !== end.y) {
+    x += dx
+    y += dy
+    grid[y][x] = 1
   }
 }
 
-function carveLadderCorridors(grid, ladder, rows) {
-  const { laneX, laneCount, rungs } = ladder;
+function buildMazeGrid(state, layout, entryCells, exitCells) {
+  const grid = Array.from({ length: layout.rows }, () => Array(layout.cols).fill(0))
 
-  // 수직 레인 전체 개방 (각 레인의 X 좌표를 위에서 아래까지 통로로)
-  for (let l = 0; l < laneCount; l++) {
-    const gx = laneX[l];
-    for (let y = 1; y < rows - 1; y++) {
-      grid[y][gx] = 1;
+  for (let y = 0; y < layout.cellRows; y++) {
+    for (let x = 0; x < layout.cellCols; x++) {
+      const cell = cellToGrid({ x, y })
+      grid[cell.y][cell.x] = 1
     }
   }
 
-  // 가로대 개방 (두 레인 사이의 수평 통로)
-  for (const rung of rungs) {
-    const x1 = laneX[rung.laneIdx];
-    const x2 = laneX[rung.laneIdx + 1];
-    const y = rung.y;
-
-    if (y < 1 || y >= rows - 1) continue;
-
-    // x1과 x2 사이의 모든 셀을 통로로
-    const minX = Math.min(x1, x2);
-    const maxX = Math.max(x1, x2);
-    for (let x = minX; x <= maxX; x++) {
-      grid[y][x] = 1;
-    }
+  for (const [from, to] of state.openEdges.values()) {
+    carveCorridor(grid, cellToGrid(from), cellToGrid(to))
   }
+
+  for (const cell of entryCells) {
+    const point = cellToGrid(cell)
+    grid[0][point.x] = 1
+  }
+
+  for (const cell of exitCells) {
+    const point = cellToGrid(cell)
+    grid[layout.rows - 1][point.x] = 1
+  }
+
+  return grid
 }
 
-// ── 4. 격자 좌표 경로 생성 ──
+function solveMazeRoute(grid, start, end) {
+  const rows = grid.length
+  const cols = grid[0].length
+  const queue = [start]
+  const visited = new Set([pointKey(start.x, start.y)])
+  const parent = new Map()
 
-function buildRoute(transitions, ladder, rows) {
-  const { laneX } = ladder;
-  const route = [];
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (current.x === end.x && current.y === end.y) {
+      break
+    }
 
-  for (let t = 0; t < transitions.length; t++) {
-    const tr = transitions[t];
+    for (const { dx, dy } of DIRECTIONS) {
+      const nextX = current.x + dx
+      const nextY = current.y + dy
 
-    if (tr.y === 0) {
-      // 시작점: 입구(y=0)에서 시작
-      route.push({ x: laneX[tr.lane], y: 0 });
-    } else if (tr.y === -1) {
-      // 끝점: 출구까지
-      const lastPoint = route[route.length - 1];
-      if (lastPoint) {
-        // 현재 위치에서 바닥까지 수직 이동
-        for (let y = lastPoint.y + 1; y < rows; y++) {
-          route.push({ x: laneX[tr.lane], y });
-        }
-      }
-    } else if (tr.action === 'moveRight' || tr.action === 'moveLeft') {
-      // 가로대 도달 전까지 수직 이동
-      const lastPoint = route[route.length - 1];
-      if (lastPoint && lastPoint.y < tr.y) {
-        for (let y = lastPoint.y + 1; y <= tr.y; y++) {
-          route.push({ x: laneX[tr.lane], y });
-        }
-      }
-    } else {
-      // 가로대 이후 새 레인 도착 (수평 이동)
-      const prevTr = transitions[t - 1];
-      if (prevTr && (prevTr.action === 'moveRight' || prevTr.action === 'moveLeft')) {
-        const fromX = laneX[prevTr.lane];
-        const toX = laneX[tr.lane];
-        const y = tr.y;
+      if (nextX < 0 || nextX >= cols || nextY < 0 || nextY >= rows) continue
+      if (grid[nextY][nextX] !== 1) continue
 
-        // 수평 이동 (한 칸씩)
-        if (toX > fromX) {
-          for (let x = fromX + 1; x <= toX; x++) {
-            route.push({ x, y });
-          }
-        } else {
-          for (let x = fromX - 1; x >= toX; x--) {
-            route.push({ x, y });
-          }
-        }
-      }
+      const nextKey = pointKey(nextX, nextY)
+      if (visited.has(nextKey)) continue
+
+      visited.add(nextKey)
+      parent.set(nextKey, current)
+      queue.push({ x: nextX, y: nextY })
     }
   }
 
-  // 중복 제거
-  const cleaned = [route[0]];
+  const route = []
+  let cursor = end
+  const endKey = pointKey(end.x, end.y)
+  if (!visited.has(endKey)) {
+    return []
+  }
+
+  while (cursor) {
+    route.push(cursor)
+    if (cursor.x === start.x && cursor.y === start.y) {
+      break
+    }
+    cursor = parent.get(pointKey(cursor.x, cursor.y))
+  }
+
+  return route.reverse()
+}
+
+function countTurns(route) {
+  let turns = 0
+
+  for (let i = 2; i < route.length; i++) {
+    const ax = route[i - 1].x - route[i - 2].x
+    const ay = route[i - 1].y - route[i - 2].y
+    const bx = route[i].x - route[i - 1].x
+    const by = route[i].y - route[i - 1].y
+
+    if (ax !== bx || ay !== by) {
+      turns++
+    }
+  }
+
+  return turns
+}
+
+function horizontalMoveCount(route) {
+  let horizontalMoves = 0
+
   for (let i = 1; i < route.length; i++) {
-    const prev = cleaned[cleaned.length - 1];
-    if (route[i].x !== prev.x || route[i].y !== prev.y) {
-      cleaned.push(route[i]);
+    if (route[i].x !== route[i - 1].x) {
+      horizontalMoves++
     }
   }
 
-  return cleaned;
+  return horizontalMoves
+}
+
+function validateMaze({ grid, paths, entries, exits, exitOrder, layout }) {
+  const errors = []
+  const routeLengths = paths.map((path) => path.route.length)
+  const avgLength = routeLengths.reduce((sum, value) => sum + value, 0) / Math.max(1, routeLengths.length)
+  const maxDelta = Math.max(10, Math.round(avgLength * 0.32))
+
+  const allowedBorderOpenings = new Set(
+    [...entries, ...exits].map((point) => pointKey(point.x, point.y))
+  )
+
+  for (let y = 0; y < layout.rows; y++) {
+    for (let x = 0; x < layout.cols; x++) {
+      if (x !== 0 && x !== layout.cols - 1 && y !== 0 && y !== layout.rows - 1) {
+        continue
+      }
+
+      if (grid[y][x] !== 1) continue
+      if (!allowedBorderOpenings.has(pointKey(x, y))) {
+        errors.push(`unexpected border opening at (${x}, ${y})`)
+      }
+    }
+  }
+
+  for (const path of paths) {
+    const entry = entries[path.from]
+    const exit = exits[path.to]
+    const route = path.route
+
+    if (route.length === 0) {
+      errors.push(`route ${path.from} is empty`)
+      continue
+    }
+
+    if (Math.abs(route.length - avgLength) > maxDelta) {
+      errors.push(`route ${path.from} length is too imbalanced`)
+    }
+
+    if (countTurns(route) < Math.max(6, Math.floor(layout.cellRows / 2))) {
+      errors.push(`route ${path.from} does not feel maze-like enough`)
+    }
+
+    if (horizontalMoveCount(route) < Math.max(8, Math.floor(layout.cellRows * 0.35))) {
+      errors.push(`route ${path.from} has too little horizontal exploration`)
+    }
+
+    const start = route[0]
+    const end = route[route.length - 1]
+    if (start.x !== entry.x || start.y !== entry.y) {
+      errors.push(`route ${path.from} does not start at its entry`)
+    }
+    if (end.x !== exit.x || end.y !== exit.y) {
+      errors.push(`route ${path.from} does not end at its assigned exit`)
+    }
+
+    for (let i = 0; i < route.length; i++) {
+      const point = route[i]
+      if (grid[point.y]?.[point.x] !== 1) {
+        errors.push(`route ${path.from} walks through a wall`)
+        break
+      }
+
+      if (i === 0) continue
+
+      const previous = route[i - 1]
+      const distance = Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y)
+      if (distance !== 1) {
+        errors.push(`route ${path.from} is not contiguous`)
+        break
+      }
+    }
+  }
+
+  const seenTargets = new Set(exitOrder)
+  if (seenTargets.size !== exitOrder.length) {
+    errors.push('result mapping is not a permutation')
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  }
+}
+
+export function generateMaze(participantCount, options = {}) {
+  const layout = resolveLayout(participantCount)
+  const rng = createRandom(options.seed)
+  const entryColumns = computeBoundaryCells(participantCount, layout.cellCols)
+  const exitColumns = computeBoundaryCells(participantCount, layout.cellCols)
+  const entryCells = entryColumns.map((x) => ({ x, y: 0 }))
+  const exitCells = exitColumns.map((x) => ({ x, y: layout.cellRows - 1 }))
+
+  for (let attempt = 0; attempt < 48; attempt++) {
+    const exitOrder = createResultOrder(participantCount, rng)
+    const mazeState = createPerfectMaze(layout, rng)
+    const grid = buildMazeGrid(mazeState, layout, entryCells, exitCells)
+
+    const entries = entryCells.map((cell) => ({ x: cellToGrid(cell).x, y: 0 }))
+    const exits = exitCells.map((cell) => ({ x: cellToGrid(cell).x, y: layout.rows - 1 }))
+
+    const paths = entryCells.map((entryCell, participantIdx) => {
+      const assignedExitCell = exitCells[exitOrder[participantIdx]]
+      const start = { x: cellToGrid(entryCell).x, y: 0 }
+      const end = { x: cellToGrid(assignedExitCell).x, y: layout.rows - 1 }
+
+      return {
+        from: participantIdx,
+        to: exitOrder[participantIdx],
+        route: solveMazeRoute(grid, start, end),
+      }
+    })
+
+    const validation = validateMaze({
+      grid,
+      paths,
+      entries,
+      exits,
+      exitOrder,
+      layout,
+    })
+
+    if (!validation.ok) {
+      continue
+    }
+
+    return {
+      grid,
+      paths,
+      entries,
+      exits,
+      cols: layout.cols,
+      rows: layout.rows,
+      exitOrder,
+      layout,
+    }
+  }
+
+  throw new Error('Unable to generate a valid real maze')
 }

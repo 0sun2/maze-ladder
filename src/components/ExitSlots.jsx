@@ -1,7 +1,7 @@
 const COLORS = ['#4F7DF2', '#EF4444', '#22C55E', '#F59E0B', '#A855F7', '#F97316'];
 
 export default function ExitSlots({ mazeData, revealed }) {
-  const { participants, exitOrder, results } = mazeData;
+  const { exitOrder, results } = mazeData;
 
   return (
     <div className="flex justify-around px-2 mt-2">

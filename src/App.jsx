@@ -5,6 +5,7 @@ import MazeCanvas from './components/MazeCanvas';
 import ExitSlots from './components/ExitSlots';
 import ResultSummary from './components/ResultSummary';
 import AdBanner from './components/AdBanner';
+import SiteInfo from './components/SiteInfo';
 import { useMazeGenerator } from './hooks/useMazeGenerator';
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
     allRevealed,
     generate,
     revealParticipant,
+    revealAll,
     startAnimation,
     finishAnimation,
   } = useMazeGenerator();
@@ -48,6 +50,10 @@ function App() {
     setPhase('input');
   }, []);
 
+  const handleRevealAll = useCallback(() => {
+    revealAll();
+  }, [revealAll]);
+
   // Show result when all revealed
   const showResult = allRevealed && phase === 'maze';
 
@@ -55,12 +61,17 @@ function App() {
     <main className="min-h-screen bg-gradient-to-b from-indigo-50 to-white pb-8">
       {/* Header */}
       <header className="pt-6 pb-4 text-center">
-        <div className="text-3xl mb-1">
-          {'\uD83C\uDFAF'}
-        </div>
-        <h1 className="text-lg font-bold text-indigo-600 tracking-tight">
-          미로 사다리 타기
-        </h1>
+        <button
+          onClick={handleReset}
+          className="inline-flex flex-col items-center text-indigo-600 hover:opacity-80 transition-opacity"
+        >
+          <div className="text-3xl mb-1">
+            {'\uD83C\uDFAF'}
+          </div>
+          <h1 className="text-lg font-bold tracking-tight">
+            미로 사다리 타기
+          </h1>
+        </button>
       </header>
 
       {/* Input Phase */}
@@ -90,6 +101,22 @@ function App() {
               </button>
             ))}
           </div>
+
+          {!showResult && (
+            <div className="flex justify-center mb-3">
+              <button
+                onClick={handleRevealAll}
+                disabled={animatingIdx !== null}
+                className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors ${
+                  animatingIdx !== null
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                }`}
+              >
+                바로 전체 결과 보기
+              </button>
+            </div>
+          )}
 
           {/* Entry Buttons */}
           <EntryButtons
@@ -133,6 +160,8 @@ function App() {
           {!showResult && <AdBanner className="mt-4" />}
         </section>
       )}
+
+      <SiteInfo />
 
       {/* Footer */}
       <footer className="text-center text-xs text-gray-400 mt-8 pb-4">

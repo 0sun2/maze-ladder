@@ -1,3 +1,5 @@
+import { copyShareLink, shareToKakaoTalk } from '../utils/share';
+
 const COLORS = ['#4F7DF2', '#EF4444', '#22C55E', '#F59E0B', '#A855F7', '#F97316'];
 
 export default function ResultSummary({ mazeData, onRetry, onReset }) {
@@ -52,48 +54,43 @@ export default function ResultSummary({ mazeData, onRetry, onReset }) {
 }
 
 function ShareButton({ mazeData }) {
-  const { participants, mapping } = mazeData;
+  const handleCopyLink = async () => {
+    try {
+      await copyShareLink();
+      alert('링크가 복사되었습니다!');
+    } catch {
+      alert('링크 복사에 실패했습니다.');
+    }
+  };
 
-  const handleShare = async () => {
-    const text = participants
-      .map((name) => `${name} → ${mapping[name]}`)
-      .join('\n');
-
-    const shareData = {
-      title: '미로 사다리 타기 결과',
-      text: `미로 사다리 타기 결과!\n\n${text}\n\n미로 사다리로 정해보세요!`,
-    };
-
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-      } catch {
-        // User cancelled
+  const handleKakaoShare = async () => {
+    try {
+      await shareToKakaoTalk(mazeData);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'kakao sdk unavailable') {
+        alert('카카오톡 SDK 설정값을 받으면 바로 연결할 수 있게 준비해뒀습니다.');
+        return;
       }
-    } else {
-      try {
-        await navigator.clipboard.writeText(shareData.text);
-        alert('결과가 클립보드에 복사되었습니다!');
-      } catch {
-        // Fallback
-        const textarea = document.createElement('textarea');
-        textarea.value = shareData.text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-        alert('결과가 클립보드에 복사되었습니다!');
-      }
+      alert('카카오톡 공유에 실패했습니다.');
     }
   };
 
   return (
-    <button
-      onClick={handleShare}
-      className="w-full mt-3 py-3 rounded-xl bg-green-500 text-white font-bold
-                 hover:bg-green-600 transition-colors"
-    >
-      공유하기
-    </button>
+    <div className="grid grid-cols-2 gap-3 mt-3">
+      <button
+        onClick={handleKakaoShare}
+        className="py-3 rounded-xl bg-yellow-300 text-yellow-950 font-bold
+                   hover:bg-yellow-400 transition-colors"
+      >
+        카카오톡 공유
+      </button>
+      <button
+        onClick={handleCopyLink}
+        className="py-3 rounded-xl bg-green-500 text-white font-bold
+                   hover:bg-green-600 transition-colors"
+      >
+        링크 복사하기
+      </button>
+    </div>
   );
 }

@@ -23,8 +23,17 @@ export function useMazeGenerator() {
   }, []);
 
   const revealParticipant = useCallback((idx) => {
-    setRevealed((prev) => [...prev, idx]);
+    setRevealed((prev) => (prev.includes(idx) ? prev : [...prev, idx]));
   }, []);
+
+  const revealAll = useCallback(() => {
+    setRevealed(() => (
+      mazeData
+        ? Array.from({ length: mazeData.participants.length }, (_, idx) => idx)
+        : []
+    ));
+    setAnimatingIdx(null);
+  }, [mazeData]);
 
   const startAnimation = useCallback((idx) => {
     setAnimatingIdx(idx);
@@ -43,6 +52,7 @@ export function useMazeGenerator() {
     allRevealed,
     generate,
     revealParticipant,
+    revealAll,
     startAnimation,
     finishAnimation,
   };
