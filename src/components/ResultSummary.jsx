@@ -67,8 +67,16 @@ function ShareButton({ mazeData }) {
     try {
       await shareToKakaoTalk(mazeData);
     } catch (error) {
+      if (error instanceof Error && error.message === 'kakao js key unavailable') {
+        alert('카카오 JavaScript 키가 비어 있습니다. Cloudflare Pages 환경변수 `VITE_KAKAO_JS_KEY`를 확인하세요.');
+        return;
+      }
       if (error instanceof Error && error.message === 'kakao sdk unavailable') {
-        alert('카카오톡 SDK 설정값을 받으면 바로 연결할 수 있게 준비해뒀습니다.');
+        alert('카카오 SDK 초기화에 실패했습니다. 앱 키와 도메인 설정을 다시 확인하세요.');
+        return;
+      }
+      if (error instanceof Error && error.message === 'kakao sdk load failed') {
+        alert('카카오 SDK 스크립트를 불러오지 못했습니다. 네트워크 상태나 브라우저 차단 설정을 확인하세요.');
         return;
       }
       alert('카카오톡 공유에 실패했습니다.');
