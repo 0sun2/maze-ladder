@@ -1,19 +1,22 @@
 /**
- * 미로 사다리 알고리즘 v4
+ * 미로 사다리 알고리즘 v5 — 정통 미로 생성
  *
- * 전략: 경유점(waypoint) 기반 경로 생성
- * 1. 입구→출구 사이에 여러 경유점을 랜덤 배치
- * 2. 경유점을 L자 세그먼트로 연결 → 자연스러운 구불구불함
- * 3. 경로만 통로, 나머지는 벽 → 갈림길 없음
- * 4. 장식 통로 추가 → 시각적 복잡도
+ * 1. 재귀 백트래킹으로 완벽한(perfect) 미로 생성
+ *    → 모든 셀이 연결, 루프 없음 → 두 점 사이 경로가 정확히 1개
+ * 2. 입구/출구를 미로 격자에 맞춰 배치
+ * 3. BFS로 유일한 경로를 찾아 캐릭터가 따라감
+ *    → 완벽 미로이므로 갈림길에서 "선택"이 아닌 "유일한 길"
  */
 
-const GRID_SIZES = {
-  2: { cols: 25, rows: 33 },
-  3: { cols: 31, rows: 35 },
-  4: { cols: 37, rows: 37 },
-  5: { cols: 43, rows: 39 },
-  6: { cols: 47, rows: 39 },
+// 셀 좌표는 홀수 (1,3,5,...), 벽은 짝수 (0,2,4,...)
+// 실제 격자 크기 = cellCount * 2 + 1
+
+const CELL_COUNTS = {
+  2: { cx: 8,  cy: 10 },
+  3: { cx: 10, cy: 11 },
+  4: { cx: 12, cy: 12 },
+  5: { cx: 14, cy: 13 },
+  6: { cx: 15, cy: 13 },
 };
 
 function shuffle(arr) {
@@ -27,266 +30,146 @@ function shuffle(arr) {
 
 const key = (x, y) => `${x},${y}`;
 
+// 셀 좌표(cx,cy) → 격자 좌표(gx,gy)
+const cellToGrid = (cx, cy) => ({ x: cx * 2 + 1, y: cy * 2 + 1 });
+
 export function generateMaze(participantCount) {
-  const { cols, rows } = GRID_SIZES[participantCount] || GRID_SIZES[4];
+  const { cx: cellsX, cy: cellsY } = CELL_COUNTS[participantCount] || CELL_COUNTS[4];
+  const cols = cellsX * 2 + 1;
+  const rows = cellsY * 2 + 1;
+
+  // 격자: 0 = 벽, 1 = 통로
   const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
 
-  // 입구/출구 균등 배치
-  const spacing = Math.floor(cols / (participantCount + 1));
+  // ── 1단계: 재귀 백트래킹으로 완벽 미로 생성 ──
+  carveRecursive(grid, cellsX, cellsY);
+
+  // ── 2단계: 입구/출구 배치 ──
   const entries = [];
   const exits = [];
+  const spacing = Math.floor(cellsX / participantCount);
+  const offset = Math.floor((cellsX - spacing * (participantCount - 1)) / 2);
+
   for (let i = 0; i < participantCount; i++) {
-    entries.push({ x: spacing * (i + 1), y: 0 });
-    exits.push({ x: spacing * (i + 1), y: rows - 1 });
+    const cx = Math.min(cellsX - 1, offset + spacing * i);
+    const gx = cx * 2 + 1;
+
+    // 입구: 최상단 벽을 뚫어 연결
+    grid[0][gx] = 1;
+    entries.push({ x: gx, y: 0 });
+
+    // 출구: 최하단 벽을 뚫어 연결
+    grid[rows - 1][gx] = 1;
+    exits.push({ x: gx, y: rows - 1 });
   }
 
-  // 출구 셔플
+  // ── 3단계: 출구 셔플 (랜덤 매핑) ──
   const exitOrder = shuffle(Array.from({ length: participantCount }, (_, i) => i));
 
-  // 교차 거리가 큰 쌍부터 경로 생성 (공간 확보)
-  const pairs = exitOrder.map((exitIdx, i) => ({
-    idx: i,
-    entry: entries[i],
-    exit: exits[exitIdx],
-    crossDist: Math.abs(entries[i].x - exits[exitIdx].x),
-  }));
-  pairs.sort((a, b) => b.crossDist - a.crossDist);
-
-  const globalUsed = new Set();
-  const paths = new Array(participantCount);
-
-  for (const pair of pairs) {
-    const route = buildRoute(pair.entry, pair.exit, cols, rows, globalUsed);
-    paths[pair.idx] = { from: pair.idx, to: exitOrder[pair.idx], route };
-    for (const p of route) {
-      grid[p.y][p.x] = 1;
-      globalUsed.add(key(p.x, p.y));
-    }
+  // ── 4단계: BFS로 유일한 경로 찾기 ──
+  const paths = [];
+  for (let i = 0; i < participantCount; i++) {
+    const entry = entries[i];
+    const exit = exits[exitOrder[i]];
+    const route = bfsPath(grid, entry, exit, cols, rows);
+    paths.push({ from: i, to: exitOrder[i], route });
   }
-
-  // 장식용 독립 통로
-  addDecorations(grid, cols, rows);
 
   return { grid, paths, entries, exits, cols, rows, exitOrder };
 }
 
 /**
- * 경유점 기반 경로 생성
+ * 재귀 백트래킹 미로 생성 (Recursive Backtracker)
+ * - 모든 셀을 방문하여 완벽 미로(perfect maze) 생성
+ * - 루프 없음 → 임의의 두 셀 사이 경로가 정확히 1개
  */
-function buildRoute(start, end, cols, rows, globalUsed) {
-  // 경유점 개수: 행 수에 비례 (5~8개)
-  const waypointCount = 5 + Math.floor(Math.random() * 4);
-  const waypoints = [start];
+function carveRecursive(grid, cellsX, cellsY) {
+  const visited = Array.from({ length: cellsY }, () => Array(cellsX).fill(false));
 
-  // 세로 구간을 균등 분할하고, 각 구간에 랜덤 x 위치 경유점 배치
-  const segH = Math.floor((rows - 2) / (waypointCount + 1));
-  for (let i = 1; i <= waypointCount; i++) {
-    const wy = Math.min(rows - 2, i * segH + Math.floor(Math.random() * 3) - 1);
-    // x는 양쪽 여백 2칸 확보, 넓은 범위에서 랜덤
-    const wx = 2 + Math.floor(Math.random() * (cols - 4));
-    waypoints.push({ x: wx, y: wy });
-  }
-  waypoints.push(end);
-
-  // 경유점들을 L자 세그먼트로 연결
-  const fullPath = [];
-  for (let i = 0; i < waypoints.length - 1; i++) {
-    const from = waypoints[i];
-    const to = waypoints[i + 1];
-    const segment = connectLShape(from, to, cols, rows, globalUsed, fullPath);
-    // 첫 세그먼트가 아니면 시작점 중복 제거
-    if (i > 0 && segment.length > 0) segment.shift();
-    fullPath.push(...segment);
+  // 모든 셀 위치를 통로로 초기화
+  for (let cy = 0; cy < cellsY; cy++) {
+    for (let cx = 0; cx < cellsX; cx++) {
+      const { x, y } = cellToGrid(cx, cy);
+      grid[y][x] = 1;
+    }
   }
 
-  // 자기 자신과 겹치는 부분 정리 (루프 제거)
-  return removeSelfLoops(fullPath);
+  const dirs = [
+    { dcx: 0, dcy: -1 }, // 위
+    { dcx: 0, dcy: 1 },  // 아래
+    { dcx: -1, dcy: 0 }, // 왼쪽
+    { dcx: 1, dcy: 0 },  // 오른쪽
+  ];
+
+  // 스택 기반 DFS (재귀 깊이 제한 회피)
+  const stack = [{ cx: 0, cy: 0 }];
+  visited[0][0] = true;
+
+  while (stack.length > 0) {
+    const cur = stack[stack.length - 1];
+    const neighbors = [];
+
+    for (const { dcx, dcy } of dirs) {
+      const nx = cur.cx + dcx;
+      const ny = cur.cy + dcy;
+      if (nx >= 0 && nx < cellsX && ny >= 0 && ny < cellsY && !visited[ny][nx]) {
+        neighbors.push({ cx: nx, cy: ny, dcx, dcy });
+      }
+    }
+
+    if (neighbors.length === 0) {
+      stack.pop();
+      continue;
+    }
+
+    // 랜덤 이웃 선택
+    const next = neighbors[Math.floor(Math.random() * neighbors.length)];
+    visited[next.cy][next.cx] = true;
+
+    // 두 셀 사이의 벽을 제거 (통로 연결)
+    const wallX = cur.cx * 2 + 1 + next.dcx;
+    const wallY = cur.cy * 2 + 1 + next.dcy;
+    grid[wallY][wallX] = 1;
+
+    stack.push({ cx: next.cx, cy: next.cy });
+  }
 }
 
 /**
- * 두 점을 L자로 연결 (가로→세로 또는 세로→가로, 랜덤 선택)
- * 다른 경로와 겹치면 우회 시도
+ * BFS 최단 경로 탐색
+ * 완벽 미로이므로 경로는 정확히 1개 → 항상 같은 결과
  */
-function connectLShape(from, to, cols, rows, globalUsed, currentPath) {
-  const currentSet = new Set(currentPath.map(p => key(p.x, p.y)));
+function bfsPath(grid, start, end, cols, rows) {
+  const queue = [{ x: start.x, y: start.y, path: [{ x: start.x, y: start.y }] }];
+  const visited = new Set([key(start.x, start.y)]);
 
-  // 두 가지 L자 패턴 시도: 가로먼저 vs 세로먼저
-  const patterns = Math.random() < 0.5
-    ? ['hv', 'vh']
-    : ['vh', 'hv'];
+  const dirs = [
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+  ];
 
-  for (const pattern of patterns) {
-    const segment = tryLPattern(from, to, pattern, cols, rows, globalUsed, currentSet);
-    if (segment) return segment;
-  }
+  while (queue.length > 0) {
+    const { x, y, path } = queue.shift();
 
-  // 둘 다 막히면 경유점 추가해서 우회
-  const midY = Math.floor((from.y + to.y) / 2);
-  const midX = Math.max(2, Math.min(cols - 3,
-    Math.floor((from.x + to.x) / 2) + Math.floor(Math.random() * 8) - 4
-  ));
-
-  const seg1 = tryLPattern(from, { x: midX, y: midY }, 'hv', cols, rows, globalUsed, currentSet) ||
-               directLine(from, { x: midX, y: midY });
-  const segSet = new Set([...currentPath, ...seg1].map(p => key(p.x, p.y)));
-  const seg2 = tryLPattern({ x: midX, y: midY }, to, 'vh', cols, rows, globalUsed, segSet) ||
-               directLine({ x: midX, y: midY }, to);
-
-  if (seg2.length > 0) seg2.shift(); // 중복 제거
-  return [...seg1, ...seg2];
-}
-
-function tryLPattern(from, to, pattern, cols, rows, globalUsed, currentSet) {
-  const segment = [];
-
-  if (pattern === 'hv') {
-    // 가로 먼저, 세로 나중
-    const midX = to.x;
-    const midY = from.y;
-
-    // 가로 이동
-    const dx = midX > from.x ? 1 : -1;
-    let x = from.x;
-    while (x !== midX) {
-      if (isBlocked(x, midY, globalUsed, currentSet)) return null;
-      segment.push({ x, y: midY });
-      x += dx;
+    if (x === end.x && y === end.y) {
+      return path;
     }
 
-    // 세로 이동
-    const dy = to.y > midY ? 1 : -1;
-    let y = midY;
-    while (y !== to.y) {
-      if (isBlocked(midX, y, globalUsed, currentSet)) return null;
-      segment.push({ x: midX, y });
-      y += dy;
-    }
-    segment.push({ x: to.x, y: to.y });
-  } else {
-    // 세로 먼저, 가로 나중
-    const midX = from.x;
-    const midY = to.y;
+    for (const { dx, dy } of dirs) {
+      const nx = x + dx;
+      const ny = y + dy;
 
-    // 세로 이동
-    const dy = midY > from.y ? 1 : -1;
-    let y = from.y;
-    while (y !== midY) {
-      if (isBlocked(midX, y, globalUsed, currentSet)) return null;
-      segment.push({ x: midX, y });
-      y += dy;
-    }
+      if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+      if (grid[ny][nx] !== 1) continue;
+      if (visited.has(key(nx, ny))) continue;
 
-    // 가로 이동
-    const dx = to.x > midX ? 1 : -1;
-    let x = midX;
-    while (x !== to.x) {
-      if (isBlocked(x, midY, globalUsed, currentSet)) return null;
-      segment.push({ x, y: midY });
-      x += dx;
-    }
-    segment.push({ x: to.x, y: to.y });
-  }
-
-  return segment;
-}
-
-function isBlocked(x, y, globalUsed, currentSet) {
-  const k = key(x, y);
-  return globalUsed.has(k) && !currentSet.has(k);
-}
-
-function directLine(from, to) {
-  const path = [];
-  let { x, y } = from;
-  while (x !== to.x) {
-    path.push({ x, y });
-    x += x < to.x ? 1 : -1;
-  }
-  while (y !== to.y) {
-    path.push({ x, y });
-    y += y < to.y ? 1 : -1;
-  }
-  path.push({ x: to.x, y: to.y });
-  return path;
-}
-
-/**
- * 경로 내 자기 교차(루프) 제거
- */
-function removeSelfLoops(path) {
-  const seen = new Map(); // key -> index in cleaned path
-  const cleaned = [];
-
-  for (const p of path) {
-    const k = key(p.x, p.y);
-    if (seen.has(k)) {
-      // 루프 발견: 이전 위치까지 되감기
-      const prevIdx = seen.get(k);
-      // prevIdx+1부터 현재까지 제거
-      const removed = cleaned.splice(prevIdx + 1);
-      for (const r of removed) {
-        seen.delete(key(r.x, r.y));
-      }
-    } else {
-      seen.set(k, cleaned.length);
-      cleaned.push(p);
+      visited.add(key(nx, ny));
+      queue.push({ x: nx, y: ny, path: [...path, { x: nx, y: ny }] });
     }
   }
 
-  return cleaned;
-}
-
-/**
- * 시각적 복잡도를 위한 장식 통로
- */
-function addDecorations(grid, cols, rows) {
-  const count = Math.floor(cols * rows * 0.025);
-
-  for (let i = 0; i < count; i++) {
-    const sx = 1 + Math.floor(Math.random() * (cols - 2));
-    const sy = 2 + Math.floor(Math.random() * (rows - 4));
-
-    if (grid[sy][sx] === 1) continue;
-
-    // 기존 통로와 인접하면 건너뜀
-    let adjacent = false;
-    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
-      const nx = sx + dx;
-      const ny = sy + dy;
-      if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && grid[ny][nx] === 1) {
-        adjacent = true;
-        break;
-      }
-    }
-    if (adjacent) continue;
-
-    // 1~3칸 짧은 독립 통로
-    const len = 1 + Math.floor(Math.random() * 3);
-    const horizontal = Math.random() < 0.5;
-    const cells = [{ x: sx, y: sy }];
-    let valid = true;
-
-    for (let j = 1; j < len; j++) {
-      const nx = horizontal ? sx + j : sx;
-      const ny = horizontal ? sy : sy + j;
-      if (nx >= cols - 1 || ny >= rows - 1) { valid = false; break; }
-      if (grid[ny][nx] === 1) { valid = false; break; }
-
-      let adj2 = false;
-      for (const [ddx, ddy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const ax = nx + ddx;
-        const ay = ny + ddy;
-        if (ax >= 0 && ax < cols && ay >= 0 && ay < rows && grid[ay][ax] === 1) {
-          adj2 = true;
-          break;
-        }
-      }
-      if (adj2) { valid = false; break; }
-      cells.push({ x: nx, y: ny });
-    }
-
-    if (valid) {
-      for (const c of cells) grid[c.y][c.x] = 1;
-    }
-  }
+  // 도달 불가 시 폴백 (정상적으로는 발생하지 않음)
+  return [start, end];
 }
