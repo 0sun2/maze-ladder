@@ -7,9 +7,11 @@ import ResultSummary from './components/ResultSummary';
 import AdBanner from './components/AdBanner';
 import SiteInfo from './components/SiteInfo';
 import { useMazeGenerator } from './hooks/useMazeGenerator';
+import { clearSharedUrl, parseSharedMazeData } from './utils/share';
 
 function App() {
-  const [phase, setPhase] = useState('input'); // input | maze | result
+  const [sharedMazeData, setSharedMazeData] = useState(() => parseSharedMazeData());
+  const [phase, setPhase] = useState(() => (parseSharedMazeData() ? 'result' : 'input')); // input | maze | result
   const [speed, setSpeed] = useState('normal');
   const [inputCache, setInputCache] = useState(null);
 
@@ -26,6 +28,8 @@ function App() {
   } = useMazeGenerator();
 
   const handleGenerate = useCallback((participants, results) => {
+    clearSharedUrl();
+    setSharedMazeData(null);
     setInputCache({ participants, results });
     generate(participants, results);
     setPhase('maze');
@@ -41,12 +45,28 @@ function App() {
   }, [revealParticipant, finishAnimation]);
 
   const handleRetry = useCallback(() => {
-    if (inputCache) {
-      generate(inputCache.participants, inputCache.results);
+    if (sharedMazeData) {
+      clearSharedUrl();
+      setSharedMazeData(null);
+      setInputCache({
+        participants: sharedMazeData.participants,
+        results: sharedMazeData.results,
+      });
+      generate(sharedMazeData.participants, sharedMazeData.results);
+      setPhase('maze');
+      return;
     }
-  }, [inputCache, generate]);
+
+    if (inputCache) {
+      clearSharedUrl();
+      generate(inputCache.participants, inputCache.results);
+      setPhase('maze');
+    }
+  }, [sharedMazeData, inputCache, generate]);
 
   const handleReset = useCallback(() => {
+    clearSharedUrl();
+    setSharedMazeData(null);
     setPhase('input');
   }, []);
 
@@ -175,6 +195,17 @@ function App() {
           )}
 
           {!showResult && <AdBanner className="mt-4" />}
+        </section>
+      )}
+
+      {phase === 'result' && sharedMazeData && (
+        <section className="w-full max-w-lg mx-auto px-2">
+          <ResultSummary
+            mazeData={sharedMazeData}
+            onRetry={handleRetry}
+            onReset={handleReset}
+          />
+          <AdBanner />
         </section>
       )}
 

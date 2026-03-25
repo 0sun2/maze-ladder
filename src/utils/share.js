@@ -1,13 +1,111 @@
 const KAKAO_SDK_URL = 'https://t1.kakaocdn.net/kakao_js_sdk/2.8.0/kakao.min.js';
+const SHARE_PARAM = 'shared';
+const SHARE_IMAGE_PATH = '/kakao-share-card.svg';
 
 let kakaoSdkPromise = null;
 
-function getShareUrl() {
+function getCurrentUrl() {
   if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return new URL(window.location.href);
+}
+
+function encodePayload(payload) {
+  const json = JSON.stringify(payload);
+  const bytes = new TextEncoder().encode(json);
+  let binary = '';
+
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+
+  return btoa(binary);
+}
+
+function decodePayload(value) {
+  const binary = atob(value);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const json = new TextDecoder().decode(bytes);
+  return JSON.parse(json);
+}
+
+function buildSharePayload(mazeData) {
+  return {
+    participants: mazeData.participants,
+    results: mazeData.results,
+    mapping: mazeData.mapping,
+  };
+}
+
+export function buildShareUrl(mazeData) {
+  const currentUrl = getCurrentUrl();
+
+  if (!currentUrl) {
     return '';
   }
 
-  return window.location.href;
+  if (!mazeData) {
+    return currentUrl.toString();
+  }
+
+  const shareUrl = new URL(`${currentUrl.origin}${currentUrl.pathname}`);
+  shareUrl.searchParams.set(SHARE_PARAM, encodePayload(buildSharePayload(mazeData)));
+  return shareUrl.toString();
+}
+
+export function parseSharedMazeData() {
+  const currentUrl = getCurrentUrl();
+
+  if (!currentUrl) {
+    return null;
+  }
+
+  const encoded = currentUrl.searchParams.get(SHARE_PARAM);
+
+  if (!encoded) {
+    return null;
+  }
+
+  try {
+    const payload = decodePayload(encoded);
+    const { participants, results, mapping } = payload;
+
+    if (!Array.isArray(participants) || !Array.isArray(results) || !mapping || typeof mapping !== 'object') {
+      return null;
+    }
+
+    if (participants.length === 0 || participants.length !== results.length) {
+      return null;
+    }
+
+    const hasAllMappings = participants.every((name) => typeof mapping[name] === 'string');
+
+    if (!hasAllMappings) {
+      return null;
+    }
+
+    return {
+      participants,
+      results,
+      mapping,
+      sharedMode: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearSharedUrl() {
+  const currentUrl = getCurrentUrl();
+
+  if (!currentUrl || !currentUrl.searchParams.has(SHARE_PARAM)) {
+    return;
+  }
+
+  const nextUrl = new URL(`${currentUrl.origin}${currentUrl.pathname}`);
+  window.history.replaceState({}, '', nextUrl.toString());
 }
 
 export function buildShareMessage(mazeData) {
@@ -16,7 +114,7 @@ export function buildShareMessage(mazeData) {
     .map((name) => `${name} → ${mapping[name]}`)
     .join('\n');
 
-  const url = getShareUrl();
+  const url = buildShareUrl(mazeData);
 
   return {
     title: '미로 사다리 타기',
@@ -26,8 +124,8 @@ export function buildShareMessage(mazeData) {
   };
 }
 
-export async function copyShareLink() {
-  const url = getShareUrl();
+export async function copyShareLink(mazeData) {
+  const url = buildShareUrl(mazeData);
 
   if (!url) {
     throw new Error('share url unavailable');
@@ -115,13 +213,16 @@ export async function shareToKakaoTalk(mazeData) {
 
   const { title, description, url } = buildShareMessage(mazeData);
   const kakao = await getInitializedKakao();
+  const imageUrl = new URL(SHARE_IMAGE_PATH, window.location.origin).toString();
 
   kakao.Share.sendDefault({
     objectType: 'feed',
     content: {
       title,
       description,
-      imageUrl: `${window.location.origin}/favicon.svg`,
+      imageUrl,
+      imageWidth: 1200,
+      imageHeight: 630,
       link: {
         mobileWebUrl: url,
         webUrl: url,

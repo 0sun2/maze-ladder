@@ -56,7 +56,7 @@ export default function ResultSummary({ mazeData, onRetry, onReset }) {
 function ShareButton({ mazeData }) {
   const handleCopyLink = async () => {
     try {
-      await copyShareLink();
+      await copyShareLink(mazeData);
       alert('링크가 복사되었습니다!');
     } catch {
       alert('링크 복사에 실패했습니다.');

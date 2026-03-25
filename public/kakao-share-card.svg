@@ -1,0 +1,24 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" rx="48" fill="#EEF2FF"/>
+  <rect x="42" y="42" width="1116" height="546" rx="36" fill="#1E293B"/>
+  <path d="M164 142H308V190H212V278H308V326H164V462H260V510H116V94H308V142H164Z" fill="#F8FAFC"/>
+  <path d="M390 110C390 92.3269 404.327 78 422 78H776C793.673 78 808 92.3269 808 110V220C808 237.673 793.673 252 776 252H422C404.327 252 390 237.673 390 220V110Z" fill="#4F46E5"/>
+  <text x="434" y="152" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="34" font-weight="700">미로 사다리 타기</text>
+  <text x="434" y="206" fill="#E0E7FF" font-family="Arial, sans-serif" font-size="22" font-weight="400">결과 예측이 힘든 미로 형식의 랜덤 게임</text>
+  <path d="M922 132C922 106.595 942.595 86 968 86H1046C1071.41 86 1092 106.595 1092 132V210C1092 235.405 1071.41 256 1046 256H968C942.595 256 922 235.405 922 210V132Z" fill="#FDE047"/>
+  <circle cx="1007" cy="171" r="40" fill="#1E293B"/>
+  <path d="M1006.55 130.996C1022.33 130.779 1036.8 136.803 1047.4 146.807L1006.55 171V130.996Z" fill="#FDE047"/>
+  <circle cx="1023" cy="153" r="6" fill="#FFFFFF"/>
+  <path d="M418 334H482V382H418V334Z" fill="#F8FAFC"/>
+  <path d="M482 334H546V382H482V334Z" fill="#CBD5E1"/>
+  <path d="M546 334H610V382H546V334Z" fill="#F8FAFC"/>
+  <path d="M674 334H738V382H674V334Z" fill="#F8FAFC"/>
+  <path d="M738 334H802V382H738V382V334Z" fill="#CBD5E1"/>
+  <path d="M418 430H514V478H418V430Z" fill="#CBD5E1"/>
+  <path d="M578 430H706V478H578V430Z" fill="#F8FAFC"/>
+  <path d="M770 430H866V478H770V430Z" fill="#CBD5E1"/>
+  <path d="M930 334H1026V382H930V334Z" fill="#F8FAFC"/>
+  <path d="M994 382H1042V478H994V382Z" fill="#F8FAFC"/>
+  <path d="M930 478H1074V526H930V478Z" fill="#F8FAFC"/>
+  <text x="390" y="560" fill="#94A3B8" font-family="Arial, sans-serif" font-size="24" font-weight="500">참가자와 결과를 입력하고, 실제 미로를 따라 결과를 확인하세요.</text>
+</svg>
