@@ -56,9 +56,22 @@ function App() {
 
   // Show result when all revealed
   const showResult = allRevealed && phase === 'maze';
+  const siteUrl = typeof window === 'undefined' ? '' : `${window.location.origin}/`;
+  const websiteSchema = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: '미로 사다리 타기',
+    alternateName: ['미로사다리', 'maze-ladder'],
+    url: siteUrl,
+    description: '결과 예측이 힘든 미로 형식의 사다리타기 게임',
+  });
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-indigo-50 to-white pb-8">
+      <script type="application/ld+json">
+        {websiteSchema}
+      </script>
+
       {/* Header */}
       <header className="pt-6 pb-4 text-center">
         <button
@@ -72,6 +85,10 @@ function App() {
             미로 사다리 타기
           </h1>
         </button>
+        <p className="max-w-md mx-auto mt-3 px-6 text-sm leading-6 text-slate-500">
+          결과 예측이 힘든 미로 형식의 사다리타기 게임.
+          참가자와 결과를 입력하면 실제 미로를 따라 내려가며 랜덤 결과를 확인할 수 있습니다.
+        </p>
       </header>
 
       {/* Input Phase */}
